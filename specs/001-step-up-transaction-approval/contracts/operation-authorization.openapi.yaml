@@ -1,0 +1,225 @@
+openapi: 3.1.0
+info:
+  title: Sensitive Operation Authorization API
+  version: 1.2.0
+  description: >
+    Local implementation contract for executing an existing sensitive operation only after
+    its current intent, authentication context, independent business authorization, and
+    single-use user approval have been verified. Identity, policy and business adapters
+    are currently simulated locally; bearer identity binding requires real integration.
+    Durable idempotency, concurrent ownership and query-only outcome reconciliation are implemented.
+servers:
+  - url: https://{host}
+    variables:
+      host:
+        default: api.example.invalid
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/operation-authorizations:
+    post:
+      operationId: authorizeSensitiveOperation
+      summary: Verify approval and execute one sensitive operation
+      description: >
+        The caller obtains explicit human approval of the exact material operation intent
+        through the trusted interaction before submitting its opaque, single-use approval
+        evidence. The server independently validates authentication strength and
+        freshness, business authorization, operation version/digest, and actor/subject
+        attribution before execution. Human approval is not deferred to a later request.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: High-entropy key scoped to the client identity claims and operation. Preserve it for replay or reconciliation.
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 255
+            pattern: '^[!-~]{16,255}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthorizationRequest"
+      responses:
+        "400":
+          description: Invalid idempotency header, request, attribution, operation intent or human approval evidence. No execution occurs.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "200":
+          description: Confirmed execution result, including confirmed failure, or a matching terminal result replayed. Attribution is preserved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizationResult"
+        "202":
+          description: >
+            Execution was accepted but its business outcome is not yet confirmed.
+            This is not a pending human approval. Retry the same request with the same
+            idempotency key to obtain or reconcile the existing operation before any
+            new business write.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizationResult"
+        "401":
+          description: >
+            Authentication is missing or does not meet required strength/recency. The
+            rejected request does not consume approval evidence or reserve the
+            idempotency key; the caller may complete step-up and retry the same request.
+          headers:
+            WWW-Authenticate:
+              description: >
+                RFC 9470 insufficient_user_authentication parameters are included when
+                additional authentication can satisfy the operation requirement.
+              schema:
+                type: string
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: Business authorization denied. Rejected or cancelled user approval does not submit an execution request.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: Key reused with a different request fingerprint, or matching execution/reconciliation is still active.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          description: Policy-defined temporary attempt limit has been reached.
+          headers:
+            Retry-After:
+              description: Optional wait interval when policy permits disclosure.
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: Unexpected internal failure with generic Problem Details and no provider diagnostics.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    AuthorizationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - subjectId
+        - operationId
+        - operationType
+        - intentVersion
+        - materialData
+        - approvalId
+      properties:
+        subjectId:
+          type: string
+          minLength: 1
+          description: Subject claim checked against the trusted stored authorization and approval.
+        actorId:
+          type: [string, "null"]
+          minLength: 1
+          pattern: '\S'
+          description: Delegated initiator; must match stored authorization and consent attribution.
+        delegated:
+          type: [boolean, "null"]
+          description: When true actorId is mandatory; when omitted delegation is inferred from actorId. False conflicts with a supplied actorId.
+        operationId:
+          type: string
+          minLength: 1
+          description: Existing operation reference owned by the business domain.
+        operationType:
+          type: string
+          minLength: 1
+          description: Stable operation classification used to resolve material fields and policy.
+        intentVersion:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Version of the business operation intent that the user reviewed.
+        materialData:
+          type: object
+          minProperties: 1
+          additionalProperties: true
+          description: Material intent whose canonical digest must match the persisted approval.
+        approvalId:
+          type: string
+          minLength: 1
+          writeOnly: true
+          description: Opaque reference to trusted persisted human consent. Approver and human confirmation are never taken from request claims.
+    AuthorizationResult:
+      type: object
+      additionalProperties: false
+      required:
+        - authorizationId
+        - operationId
+        - state
+        - executed
+        - outcomeUnknown
+        - subjectId
+      properties:
+        authorizationId:
+          type: string
+        operationId:
+          type: string
+        state:
+          type: string
+          enum:
+            - EXECUTED
+            - OUTCOME_UNKNOWN
+            - EXECUTION_FAILED
+        executed:
+          type: boolean
+        outcomeUnknown:
+          type: boolean
+        businessResultRef:
+          type: [string, "null"]
+          description: Opaque reference to the business result; contains no transaction payload.
+        executedAt:
+          type: string
+          format: date-time
+        message:
+          type: [string, "null"]
+        subjectId:
+          type: string
+          description: Subject from the validated stored authorization.
+        actorId:
+          type: [string, "null"]
+          description: Initiator from the validated stored authorization; null for a direct operation.
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details response.
+      required:
+        - type
+        - title
+        - status
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
