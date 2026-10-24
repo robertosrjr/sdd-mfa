@@ -1,0 +1,52 @@
+# Exemplos para clientes compatíveis com .http.
+# Saúde funciona sem fixture. Execução/replay exigem evidências persistidas compatíveis.
+# Ver docs/journey/jornada-tecnica-rest.md antes de enviar.
+@baseUrl = http://localhost:8080
+@idempotencyKey = 1ad42154-090f-4674-87cd-67a9be2523ce
+@subjectId = owner
+@operationId = op
+@approvalId = approval
+
+### 1. Saúde
+GET {{baseUrl}}/actuator/health
+Accept: application/json
+
+### 2. Executar operação direta previamente preparada
+# Para replay/reconciliação, reenvie ESTA requisição sem trocar chave ou corpo.
+# Para outra operação, prepare novas evidências e gere uma nova chave.
+POST {{baseUrl}}/api/v1/operation-authorizations
+Content-Type: application/json
+Accept: application/json, application/problem+json
+Idempotency-Key: {{idempotencyKey}}
+X-Correlation-Id: rest-demo-001
+
+{
+  "subjectId": "{{subjectId}}",
+  "delegated": false,
+  "operationId": "{{operationId}}",
+  "operationType": "TRANSFER",
+  "intentVersion": 1,
+  "materialData": {
+    "amount": "10",
+    "currency": "BRL"
+  },
+  "approvalId": "{{approvalId}}"
+}
+
+### 3. Validação negativa: chave obrigatória ausente (esperado: 400)
+POST {{baseUrl}}/api/v1/operation-authorizations
+Content-Type: application/json
+Accept: application/problem+json
+
+{
+  "subjectId": "{{subjectId}}",
+  "delegated": false,
+  "operationId": "{{operationId}}",
+  "operationType": "TRANSFER",
+  "intentVersion": 1,
+  "materialData": {
+    "amount": "10",
+    "currency": "BRL"
+  },
+  "approvalId": "{{approvalId}}"
+}

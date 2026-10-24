@@ -1,5 +1,8 @@
 # Execução e API
 
+Roteiro completo: [jornada técnica com cliente REST](../docs/journey/jornada-tecnica-rest.md)
+e [requisições de exemplo](requests/operation-authorizations.http).
+
 ## Requisitos
 
 - JDK 21 ou superior, com compilação configurada em `release 21`.
